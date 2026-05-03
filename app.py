@@ -14,10 +14,11 @@ Características principales:
 El modelo utilizado es un ... entrenado previamente y guardado en '...pkl'.
 """
 
-from pydatic import BaseModel, Field
+from pydantic import BaseModel, Field
 import joblib
 from fastapi import FastAPI, HTTPException
 import time
+import numpy as np
 
 # ------------------------- Modelo de datos Pydantic -------------------------
 # Definimos un modelo Pydantic para validar automáticamente las entradas.
@@ -28,13 +29,14 @@ class FlowerFeatures(BaseModel):
     petal_length: float = Field(..., ge=0, le=1000, description="Longitud del pétalo en cm")
     petal_width: float = Field(..., ge=0, le=1000, description="Ancho del pétalo en cm")
 
+CLASSES = ["setosa", "versicolor", "virginica"]
 
 # ------------------------- Cargar modelo entrenado -------------------------
 # El modelo de Machine Learning se carga al iniciar la aplicación.
 # Se utiliza joblib para deserializar el modelo guardado en un archivo pickle.
 # Si no se puede cargar, se lanza un error crítico que detiene la aplicación.
 try: 
-    model = joblib.load('iris_model.pkl')
+    model = joblib.load('./model_RFC.pkl')
     print(f"Modelo cargado exitosamente.")
 except Exception as e:
     print(f"Error al cargar el modelo: {e}")
@@ -73,37 +75,45 @@ start_time = time.time()
 # Errores posibles:
 # - 422: Datos inválidos (Pydantic validation error).
 # - 500: Error interno (problema con el modelo o procesamiento).
-@app.post("/predict")
-async def predict_delay(features: FlowerFeatures):
-    global prediction_count
+@app.post("/predict-batch")
+async def predict_batch(features_list: list[FlowerFeatures]):
     try:
-        # Convertir los datos de entrada a un formato adecuado para el modelo
-        input_data = [[
-            features.sepal_length,
-            features.sepal_width,
-            features.petal_length,
-            features.petal_width
-        ]]
-        
-        probability, prediction, status, index, confidence = model.predict_proba(input_data)
+        results = []
+        for features in features_list:
+            # Convertir entrada a array 2D
+            input_data = [[
+                features.sepal_length,
+                features.sepal_width,
+                features.petal_length,
+                features.petal_width
+            ]]
 
-        prediction_count += 1
+            # Obtener probabilidades
+            probabilities = model.predict_proba(input_data)[0]
 
-        return {
+            # Índice y clase predicha
+            index = int(np.argmax(probabilities))
+            prediction = CLASSES[index]
+            confidence = float(probabilities[index])
+
+            # Construir respuesta
+            result = {
                 "prediction": prediction,
                 "prediction_index": index,
                 "probabilities": {
-                "setosa": probability[0],
-                "versicolor": probability[1],
-                "virginica": probability[2]
-            },
-            "confidence": confidence,
-            "status": status
-        }
-    
+                    "setosa": float(probabilities[0]),
+                    "versicolor": float(probabilities[1]),
+                    "virginica": float(probabilities[2])
+                },
+                "confidence": confidence,
+                "status": "ok"
+            }
+            results.append(result)
+
+        return {"predictions": results, "count": len(results)}
+
     except Exception as e:
-         # Capturar cualquier error y retornar 500
-        raise HTTPException(status_code=500, detail=f"Prediction failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Batch prediction failed: {e}")
 
 
 
@@ -137,38 +147,38 @@ async def predict_delay(features: FlowerFeatures):
 # Notas:
 # - inválidos se ignoran silenciosamente (no se incluyen en resultados).
 # - Útil para procesar múltiples vuelos en una sola solicitud, optimizando rendimiento.
-@app.post("/predict-batch")
-async def predict_batch(features_list: list[FlowerFeatures]):
+@app.post("/predict")
+async def predict_batch(features: FlowerFeatures):
     global prediction_count
     try:
-        results = []
-        for features in features_list:
-        
-            input_data = [[
-                features.sepal_length,
-                features.sepal_width,
-                features.petal_length,
-                features.petal_width
-            ]]
-            
-            probability, prediction, status, index, confidence = model.predict_proba(input_data)
+        input_data = [[
+            features.sepal_length,
+            features.sepal_width,
+            features.petal_length,
+            features.petal_width
+        ]]
+        # Obtener probabilidades
+        probabilities = model.predict_proba(input_data)[0]
 
-            results.append({
-                "prediction": prediction,
-                "prediction_index": index,
-                "probabilities": {
-                    "setosa": probability[0],
-                    "versicolor": probability[1],
-                    "virginica": probability[2]
-                },
-                "confidence": confidence,
-                "status": status
-            })
-            prediction_count += 1
-            return {"predictions": results, "count": len(results)}
-    
+        # Índice y clase predicha
+        index = int(np.argmax(probabilities))
+        prediction = CLASSES[index]
+        confidence = float(probabilities[index])
+        prediction_count += 1
+
+        return {
+            "prediction": prediction,
+            "prediction_index": index,
+            "probabilities": {
+                "setosa": float(probabilities[0]),
+                "versicolor": float(probabilities[1]),
+                "virginica": float(probabilities[2])
+            },
+            "confidence": confidence,
+            "status": "ok"
+        }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Batch prediction failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Prediction failed: {e}")
 
 
 # ------------------------- Endpoint info -------------------------
@@ -195,3 +205,42 @@ def info():
             "petal_width"
         ]
     }
+
+
+
+# ------------------------- Endpoint metrics -------------------------
+# Endpoint GET para obtener métricas de uso de la API.
+#
+# Método: GET
+# Ruta: /metrics
+# Sin parámetros.
+#
+# Calcula y retorna:
+# - total_predictions: Número total de predicciones realizadas desde el inicio.
+# - uptime_seconds: Tiempo en segundos que la aplicación ha estado ejecutándose.
+#
+# Útil para monitoreo y debugging del servicio.
+#
+# Respuesta (200):
+# {
+#   "total_predictions": 42,
+#   "uptime_seconds": 3600
+# }
+@app.get("/metrics")
+def metrics():
+    # Calcular uptime restando el tiempo actual al tiempo de inicio
+    uptime = int(time.time() - start_time)
+    return {
+        "total_predictions": prediction_count,
+        "uptime_seconds": uptime
+    }
+
+@app.get("/health")
+def health():
+    return {"status": "healthy"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("app:app", host="0.0.0.0", port=8000)
