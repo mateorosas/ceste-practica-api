@@ -13,7 +13,8 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 COPY . /app
 
 # Puerto comun para APIs (ajusta si tu app usa otro)
-EXPOSE 8000
+EXPOSE 8080
 
 # Comando por defecto (ajusta si usas uvicorn o flask)
-CMD ["python", "app.py"]
+# CMD ["python", "app.py"]
+CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "app:app", "--bind", "0.0.0.0:${PORT}"]
