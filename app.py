@@ -36,7 +36,7 @@ CLASSES = ["setosa", "versicolor", "virginica"]
 # Se utiliza joblib para deserializar el modelo guardado en un archivo pickle.
 # Si no se puede cargar, se lanza un error crítico que detiene la aplicación.
 try: 
-    model = joblib.load('./model_RFC.pkl')
+    model = joblib.load('./model.pkl')
     print(f"Modelo cargado exitosamente.")
 except Exception as e:
     print(f"Error al cargar el modelo: {e}")
